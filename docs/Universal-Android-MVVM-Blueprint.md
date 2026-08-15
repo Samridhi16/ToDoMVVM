@@ -71,96 +71,53 @@ class FeatureViewModel @Inject constructor(
     val uiState = _uiState.asStateFlow()
 
     private val _effect = Channel<FeatureEffect>()
-    val email: String = "",
-    val password: String = "",
-    val isLoading: Boolean = false,
-    val error: String? = null
-)
+    val effect = _effect.receiveAsFlow()
 
-sealed interface LoginEvent {
-    data class OnEmailChanged(val email: String) : LoginEvent
-    data class OnPasswordChanged(val password: String) : LoginEvent
-    data object OnLoginClicked : LoginEvent
-}
+    fun onEvent(event: FeatureEvent) {
+        when (event) {
+            is FeatureEvent.OnFieldOneChanged -> {
+                updateState { copy(fieldOne = event.value, error = null) }
+            }
+            is FeatureEvent.OnFieldTwoChanged -> {
+                updateState { copy(fieldTwo = event.value, error = null) }
+            }
+            FeatureEvent.OnPrimaryActionClicked -> performPrimaryAction()
+            FeatureEvent.OnRetryClicked -> performPrimaryAction()
+        }
+    }
 
-interface AuthRepository {
-    suspend fun login(email: String, password: String): Result<User>
-}
-~~~
+    private fun performPrimaryAction() = viewModelScope.launch {
+        val state = uiState.value
+        if (state.fieldOne.isBlank()) {
+            sendEffect(FeatureEffect.ShowSnackbar("First field is required"))
+            return@launch
+        }
 
-## Optional file packs
+        updateState { copy(isLoading = true, error = null) }
 
-### A. Network/API pack
+        repository.performAction(state.fieldOne, state.fieldTwo)
+            .onSuccess {
+                updateState { copy(isLoading = false) }
+                sendEffect(FeatureEffect.Navigate("next_screen"))
+            }
+            .onFailure { throwable ->
+                updateState {
+                    copy(isLoading = false, error = throwable.message ?: "Something went wrong")
+                }
+            }
+    }
 
-Add this for login, feed, search, payments, weather, products, or any server-backed feature.
+    private fun updateState(
+        transform: FeatureUiState.() -> FeatureUiState
+    ) {
+        _uiState.update(transform)
+    }
 
-~~~text
-data/remote/
-├── FeatureApi.kt          # Retrofit endpoint declarations
-├── FeatureRequest.kt      # Request body
-├── FeatureResponse.kt     # Server JSON model
-└── FeatureMapper.kt       # Optional: response to app model
-~~~
-
-~~~kotlin
-interface FeatureApi {
-    @POST("feature/action")
-    suspend fun performAction(
-        @Body request: FeatureRequest
-    ): FeatureResponse
-}
-~~~
-
-### B. Local persistence/Room pack
-
-Add this only when data needs to survive app restarts: Todo, notes, favorites, offline cache, cart, or history.
-
-~~~text
-data/local/
-├── FeatureEntity.kt
-├── FeatureDao.kt
-└── AppDatabase.kt
-~~~
-
-~~~kotlin
-@Dao
-interface FeatureDao {
-    @Query("SELECT * FROM feature")
-    fun observeAll(): Flow<List<FeatureEntity>>
-
-    @Upsert
-    suspend fun upsert(item: FeatureEntity)
-
-    @Delete
-    suspend fun delete(item: FeatureEntity)
+    private fun sendEffect(effect: FeatureEffect) = viewModelScope.launch {
+        _effect.send(effect)
+    }
 }
 ~~~
-
-### C. Navigation pack
-
-Add this when the app has more than one destination.
-
-~~~text
-util/Routes.kt              # Route constants
-MainActivity.kt             # NavHost and destinations
-~~~
-
-~~~kotlin
-object Routes {
-    const val LOGIN = "login"
-    const val HOME = "home"
-}
-~~~
-
-### D. Dependency-injection pack
-
-Add Hilt whenever you have shared dependencies such as a repository, API client, database, or DataStore.
-
-~~~text
-App.kt                      # @HiltAndroidApp
-di/AppModule.kt             # Provides/Binds dependencies
-~~~
-
 ## The 10-second placement rule
 
 | If you are writing... | Put it in... |
@@ -172,7 +129,3 @@ di/AppModule.kt             # Provides/Binds dependencies
 | Navigation, snackbar, permission/open-browser command | FeatureEffect |
 | A contract the ViewModel calls | Repository interface |
 | Retrofit, Room, DataStore, Firebase details | Repository implementation and data source |
-
-## The memory sentence
-
-**Screen shows state. Events describe intent. ViewModel decides. Repository gets data. Effects happen once. Optional files exist only when the feature needs them.**
