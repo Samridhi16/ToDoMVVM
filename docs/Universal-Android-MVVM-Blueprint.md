@@ -2,29 +2,6 @@
 
 This is a structure for any feature: login, signup, profile, settings, feed, search, checkout, chat, Todo, or a simple API screen. Start with the Core files. Add Optional files only when the feature needs them.
 
-## First question: which files do I actually need?
-
-~~~mermaid
-flowchart TD
-    START["New feature"] --> UI["Always: Screen + ViewModel + Contract"]
-    UI --> Q1{"Needs data or business action?"}
-    Q1 -->|Yes| REPO["Add Repository interface + implementation"]
-    Q1 -->|No| SIMPLE["Keep logic in ViewModel"]
-    REPO --> Q2{"Data comes from network?"}
-    Q2 -->|Yes| API["Add API service + DTOs"]
-    Q2 -->|No| Q3{"Data must persist locally?"}
-    Q3 -->|Yes| ROOM["Add Entity + DAO + Room database"]
-    Q3 -->|No| MEMORY["Repository can use memory/preferences"]
-    UI --> Q4{"Needs another screen?"}
-    Q4 -->|Yes| NAV["Add route + NavHost destination"]
-    Q4 -->|No| DONE["Feature is complete"]
-    API --> DONE
-    ROOM --> DONE
-    MEMORY --> DONE
-    NAV --> DONE
-    SIMPLE --> DONE
-~~~
-
 ## Core files: use these for every feature
 
 ~~~text
@@ -94,3 +71,108 @@ class FeatureViewModel @Inject constructor(
     val uiState = _uiState.asStateFlow()
 
     private val _effect = Channel<FeatureEffect>()
+    val email: String = "",
+    val password: String = "",
+    val isLoading: Boolean = false,
+    val error: String? = null
+)
+
+sealed interface LoginEvent {
+    data class OnEmailChanged(val email: String) : LoginEvent
+    data class OnPasswordChanged(val password: String) : LoginEvent
+    data object OnLoginClicked : LoginEvent
+}
+
+interface AuthRepository {
+    suspend fun login(email: String, password: String): Result<User>
+}
+~~~
+
+## Optional file packs
+
+### A. Network/API pack
+
+Add this for login, feed, search, payments, weather, products, or any server-backed feature.
+
+~~~text
+data/remote/
+├── FeatureApi.kt          # Retrofit endpoint declarations
+├── FeatureRequest.kt      # Request body
+├── FeatureResponse.kt     # Server JSON model
+└── FeatureMapper.kt       # Optional: response to app model
+~~~
+
+~~~kotlin
+interface FeatureApi {
+    @POST("feature/action")
+    suspend fun performAction(
+        @Body request: FeatureRequest
+    ): FeatureResponse
+}
+~~~
+
+### B. Local persistence/Room pack
+
+Add this only when data needs to survive app restarts: Todo, notes, favorites, offline cache, cart, or history.
+
+~~~text
+data/local/
+├── FeatureEntity.kt
+├── FeatureDao.kt
+└── AppDatabase.kt
+~~~
+
+~~~kotlin
+@Dao
+interface FeatureDao {
+    @Query("SELECT * FROM feature")
+    fun observeAll(): Flow<List<FeatureEntity>>
+
+    @Upsert
+    suspend fun upsert(item: FeatureEntity)
+
+    @Delete
+    suspend fun delete(item: FeatureEntity)
+}
+~~~
+
+### C. Navigation pack
+
+Add this when the app has more than one destination.
+
+~~~text
+util/Routes.kt              # Route constants
+MainActivity.kt             # NavHost and destinations
+~~~
+
+~~~kotlin
+object Routes {
+    const val LOGIN = "login"
+    const val HOME = "home"
+}
+~~~
+
+### D. Dependency-injection pack
+
+Add Hilt whenever you have shared dependencies such as a repository, API client, database, or DataStore.
+
+~~~text
+App.kt                      # @HiltAndroidApp
+di/AppModule.kt             # Provides/Binds dependencies
+~~~
+
+## The 10-second placement rule
+
+| If you are writing... | Put it in... |
+| --- | --- |
+| TextField, Button, LazyColumn, Card | Screen or item Composable |
+| A click, typing, retry, submit action | FeatureEvent |
+| Form text, list data, loading, visible error | FeatureUiState |
+| Validation, deciding what happens after a click | ViewModel |
+| Navigation, snackbar, permission/open-browser command | FeatureEffect |
+| A contract the ViewModel calls | Repository interface |
+| Retrofit, Room, DataStore, Firebase details | Repository implementation and data source |
+
+## The memory sentence
+
+**Screen shows state. Events describe intent. ViewModel decides. Repository gets data. Effects happen once. Optional files exist only when the feature needs them.**
