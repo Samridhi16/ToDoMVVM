@@ -3,6 +3,158 @@
 This guide provides a mental model and template for developing features in this project using Jetpack Compose, Room, and Hilt.
 
 ---
+# ToDoMVVM
+
+A Jetpack Compose Todo app that stores tasks locally with Room. It supports listing tasks, creating a task, editing a task, marking it complete, deleting it, and undoing a deletion. Hilt provides the database and repository; Navigation Compose switches between the list and add/edit screens.
+
+## What the app currently does
+
+| Screen | Current behavior |
+| --- | --- |
+| Todo list | Reads all todos from Room as a Flow, renders them in a LazyColumn, and provides add, edit, delete, undo, and completion-toggle actions. |
+| Add/edit todo | Opens empty for a new todo or loads a todo by todoId for editing. It saves with Room’s REPLACE conflict strategy, then returns to the list. |
+| Local storage | Persists Todo(title, description, isDone, id) records in the Room database named todo_db. |
+
+## System design
+
+~~~mermaid
+flowchart LR
+    APP["TodoApp\n@HiltAndroidApp"]
+    ACTIVITY["MainActivity\nNavHost + routes"]
+    LIST["TodoScreen\nLazyColumn + Snackbar"]
+    EDIT["AddEditTodoScreen\nForm + Save FAB"]
+    LISTVM["TodoListViewModel"]
+    EDITVM["AddEditTodoViewModel"]
+    REPO["TodoRepository\ninterface"]
+    IMPL["TodoRepositoryImpl"]
+    DAO["TodoDao"]
+    DB[("Room database\ntodo_db")]
+
+    APP -->|"enables Hilt"| ACTIVITY
+    ACTIVITY -->|"todo_list"| LIST
+    ACTIVITY -->|"add_edit_todo?todoId={todoId}"| EDIT
+    LIST -->|"TodoListEvent"| LISTVM
+    EDIT -->|"AddEditTodoEvent"| EDITVM
+    LISTVM --> REPO
+    EDITVM --> REPO
+    REPO --> IMPL
+    IMPL --> DAO
+    DAO <--> DB
+    LISTVM -->|"UiEvent"| LIST
+    EDITVM -->|"UiEvent"| EDIT
+~~~
+
+## Request and update flow
+
+~~~mermaid
+sequenceDiagram
+    autonumber
+    participant S as TodoScreen
+    participant VM as TodoListViewModel
+    participant R as TodoRepository
+    participant D as TodoDao / Room
+    participant DB as todo_db
+
+    S->>VM: Collect todos
+    VM->>R: getTodos()
+    R->>D: getTodos()
+    D->>DB: SELECT all todos
+    DB-->>D: Todo table changes
+    D-->>S: Flow of Todo list
+    S->>S: Render LazyColumn
+
+    alt User toggles completion
+        S->>VM: OnDoneChange(todo, checked)
+        VM->>R: insertTodo(copy with new isDone)
+        R->>D: Insert with REPLACE
+        D->>DB: INSERT or REPLACE
+    else User deletes
+        S->>VM: OnDeleteTodoClick(todo)
+        VM->>R: deleteTodo(todo)
+        R->>D: Delete
+        D->>DB: DELETE
+        VM-->>S: Show deletion snackbar with Undo
+    else User presses Undo
+        S->>VM: OnUndoDeleteClick
+        VM->>R: insertTodo(deletedTodo)
+        R->>D: Insert with REPLACE
+        D->>DB: Reinsert row
+    end
+
+    DB-->>S: Updated Flow of Todo list
+~~~
+
+## Navigation flow
+
+~~~mermaid
+flowchart TD
+    START["App opens"] --> LIST["Route: todo_list\nTodoScreen"]
+    LIST -->|"Floating Action Button"| NEW["Navigate: add_edit_todo\nNew todo"]
+    LIST -->|"Tap todo"| EDIT["Navigate: add_edit_todo?todoId={id}\nExisting todo"]
+    NEW --> FORM["AddEditTodoScreen"]
+    EDIT --> FORM
+    FORM -->|"Save successful"| BACK["UiEvent.PopBackStack"]
+    BACK --> LIST
+    LIST -->|"Delete"| SNACK["Show Undo snackbar"]
+    SNACK -->|"Undo tapped"| LIST
+~~~
+
+## Key implementation details
+
+### Data layer
+
+~~~text
+Todo
+├── title: String
+├── description: String?
+├── isDone: Boolean
+└── id: Int? (@PrimaryKey)
+~~~
+
+- TodoDao.getTodos() returns Flow of the Todo list, so Room re-emits it whenever the table changes.
+- insertTodo() uses REPLACE. The same operation is used for create, edit, toggle-done, and undo.
+- getTodoById() is a suspend one-time lookup used by the edit screen.
+- TodoRepositoryImpl forwards calls to TodoDao; the repository interface keeps the ViewModels decoupled from Room.
+
+### UI-to-ViewModel events
+
+| Screen | Event | Actual outcome |
+| --- | --- | --- |
+| List | OnAddTodoClick | Emits navigation to the add/edit route. |
+| List | OnTodoClick | Navigates with the selected todo’s ID. |
+| List | OnDoneChange | Re-inserts a copied todo with the new isDone value. |
+| List | OnDeleteTodoClick | Deletes, remembers the todo in memory, and emits an Undo snackbar. |
+| List | OnUndoDeleteClick | Re-inserts the remembered todo, if present. |
+| Add/edit | onTitleChange / onDescriptionChange | Updates ViewModel Compose state. |
+| Add/edit | onSaveTodoClick | Saves a new/existing todo and emits pop-back-stack on success. |
+
+### One-time UI effects
+
+UiEvent contains Navigate, ShowSnackBar, and PopBackStack. Each ViewModel emits these through a Channel exposed with receiveAsFlow(). Each screen collects it inside LaunchedEffect(key1 = true):
+
+- TodoScreen navigates or shows a snackbar; selecting Undo sends OnUndoDeleteClick.
+- AddEditTodoScreen shows validation messages or pops the back stack after saving.
+
+## Project map
+
+~~~text
+app/src/main/java/com/example/todomvvm/
+├── TodoApp.kt                         # Hilt application
+├── MainActivity.kt                    # Compose root + NavHost
+├── data/
+│   ├── Todo.kt                        # Room entity
+│   ├── TodoDao.kt                     # Database operations
+│   ├── TodoDatabase.kt                # Room database
+│   ├── TodoRepository.kt              # Repository contract
+│   └── TodoRepositoryImpl.kt          # DAO-backed implementation
+├── di/AppModule.kt                    # Hilt database/repository providers
+├── util/
+│   ├── Routes.kt                      # Route strings
+│   └── UiEvent.kt                     # Navigation/snackbar/back effects
+└── ui/
+    ├── todo_list/                     # List composables, events, ViewModel
+    └── add_edit_todo/                 # Form composable, events, ViewModel
+~~~
 
 ## 🚀 LaunchedEffect(key1 = true)
 **Purpose:** Handling one-time side effects (Navigation, Snackbars) safely within a Composable.
