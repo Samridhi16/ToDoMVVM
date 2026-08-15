@@ -1,11 +1,9 @@
-# ToDoMVVM - Architecture & Development Guide
-
-This guide provides a mental model and template for developing features in this project using Jetpack Compose, Room, and Hilt.
-
----
 # ToDoMVVM
 
 A Jetpack Compose Todo app that stores tasks locally with Room. It supports listing tasks, creating a task, editing a task, marking it complete, deleting it, and undoing a deletion. Hilt provides the database and repository; Navigation Compose switches between the list and add/edit screens.
+
+[Screen_recording_20260815_153711.webm](https://github.com/user-attachments/assets/c56583f2-a798-4564-83cf-47b71d238062)
+
 
 ## What the app currently does
 
